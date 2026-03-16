@@ -11,6 +11,9 @@ A View NUNCA importa services diretamente; só fala com este controller.
 
 Fluxo:
     View  →  VendaController  →  Service  →  Model/DB
+
+v2: finalizar_venda distribui o preço total entre múltiplas máquinas do
+    carrinho, proporcionalmente aos preços sugeridos de cada uma.
 """
 from __future__ import annotations
 
@@ -184,16 +187,41 @@ class VendaController:
     def finalizar_venda(self, draft: VendaDraft) -> None:
         """
         Executa a venda com base no VendaDraft, faz commit.
+
+        O preço total (draft.pagamento.preco) é distribuído entre as máquinas
+        proporcionalmente aos seus preços sugeridos. Se nenhuma tiver preço
+        sugerido, o total é dividido igualmente. A última máquina absorve
+        qualquer diferença de arredondamento.
+
         Lança ValueError se os dados estiverem incompletos ou se houver
         violação de regra de negócio no service.
         """
         if not draft.is_ready():
             raise ValueError("Dados da venda incompletos.")
 
-        item = {
-            "maquina_id":    draft.maquina.id,
-            "preco_maquina": draft.pagamento.preco,
-        }
+        total    = draft.pagamento.preco
+        maquinas = draft.maquinas
+        n        = len(maquinas)
+
+        # Distribui o total proporcionalmente pelos preços sugeridos
+        soma_sug = sum(m.preco_venda_sugerido for m in maquinas)
+        if soma_sug > Decimal("0"):
+            precos = [
+                round(total * m.preco_venda_sugerido / soma_sug, 2)
+                for m in maquinas
+            ]
+        else:
+            base   = round(total / n, 2)
+            precos = [base] * n
+
+        # Ajusta diferença de arredondamento na última máquina
+        diff      = total - sum(precos)
+        precos[-1] = round(precos[-1] + diff, 2)
+
+        itens = [
+            {"maquina_id": m.id, "preco_maquina": p}
+            for m, p in zip(maquinas, precos)
+        ]
         pg = draft.pagamento
 
         if pg.tipo == "avista":
@@ -201,14 +229,14 @@ class VendaController:
             criar_venda_avista(
                 self.session,
                 cliente_id=draft.cliente.id,
-                itens=[item],
+                itens=itens,
             )
         else:
             from services.venda_service import criar_venda_parcelada
             criar_venda_parcelada(
                 self.session,
                 cliente_id=draft.cliente.id,
-                itens=[item],
+                itens=itens,
                 valor_entrada=pg.entrada,
                 num_parcelas=pg.parcelas,
                 intervalo_dias=pg.intervalo,
