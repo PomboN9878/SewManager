@@ -34,9 +34,7 @@ class Venda(Base):
     itens      = relationship("ItemVenda", back_populates="venda", cascade="all, delete-orphan")
     pagamentos = relationship("Pagamento", back_populates="venda", cascade="all, delete-orphan")
 
-    # ------------------------------------------------------------------ #
-    # Propriedades calculadas                                              #
-    # ------------------------------------------------------------------ #
+    # Propriedades calculadas
 
     @property
     def total_pago(self) -> Decimal:
